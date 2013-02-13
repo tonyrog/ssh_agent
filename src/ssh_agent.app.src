@@ -1,0 +1,8 @@
+{application, ssh_agent,
+ [{description, "SSH agent in Erlang"},
+  {vsn, git},
+  {modules, [ssh_agent]},
+  {registered, []},
+  {env, []},
+  {applications,[kernel,stdlib]}
+  ]}.
