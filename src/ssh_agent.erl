@@ -1,5 +1,5 @@
 %%
-%% To use from ssh: set SSH_AUTHSOCKET_ENV_NAME to a AF_UNIX socket
+%% To use from ssh: set SSH_AUTH_SOCK to a AF_UNIX socket
 %%
 -module(ssh_agent).
 
@@ -15,72 +15,123 @@
 
 -define(KEY_SERVER, key_store).
 
-%% reply <<Type:8, ..>>
-agent_messages() ->
-    [
-     {ssh_agentc_request_rsa_identities, 
-      ?SSH_AGENTC_REQUEST_RSA_IDENTITIES, 
-      []},
+-define(BYTE(X),          (X):8/unsigned-big-integer).
+-define(UINT16(X),        (X):16/unsigned-big-integer).
+-define(UINT32(X),        (X):32/unsigned-big-integer).
+-define(STRING(X,Len),    ?UINT32(Len), X:Len/binary).
+-define(BINARY(X,Len),    ?UINT32(Len), X:Len/binary ).
+-define(MPINT(I,Len),     ?UINT32(Len), I:Len/big-signed-integer-unit:8 ).
 
-     %% #bits/uint32 E/mpint N/mpint Challenge/mpint
-     %%  sessionid:16/bin Resp/uint32
-     {ssh_agentc_rsa_challenge, 
-      ?SSH_AGENTC_RSA_CHALLENGE,
-      [uint32,bignum,bignum,bignum,'...']}, 
+encode_bignum(X) ->
+    XSz = isize(X),
+    Pad = (8 - (XSz rem 8)) rem 8,
+    <<?UINT16(XSz),0:Pad/unsigned-integer,X:XSz/big-unsigned-integer>>.
 
-     {ssh_agentc_add_rsa_identity,
-      ?SSH_AGENTC_ADD_RSA_IDENTITY,
-      [uint32,bignum,bignum,bignum,bignum,bignum,bignum,string]},
+decode_bignum(<<?UINT16(XSz),Bin/binary>>) ->
+    Pad = (8 - (XSz rem 8)) rem 8,
+    case Bin of
+	<<_:Pad,X:XSz/big-unsigned-integer,Rest/binary>> ->
+	    {X,Rest}
+    end.
 
-     %% followed by [lifetime,uint32] [confirm]
-     {ssh_agentc_add_rsa_id_constrained,
-      ?SSH_AGENTC_ADD_RSA_ID_CONSTRAINED, 
-      [uint32,bignum,bignum,bignum,bignum,bignum,bignum,bignum,'...']},
 
-     %% #Bits/uint32, E/mpint, N/mpint
-     {ssh_agentc_remove_rsa_identity,
-      ?SSH_AGENTC_REMOVE_RSA_IDENTITY,
-      [uint32, mpint, mpint]},
+decode(<<?BYTE(?SSH_AGENTC_REQUEST_RSA_IDENTITIES),Args/binary>>) ->
+    <<>> = Args,
+    {ssh_agentc_request_rsa_identities,[]};
 
-     {ssh_agentc_remove_all_rsa_identities,
-      ?SSH_AGENTC_REMOVE_ALL_RSA_IDENTITIES,
-      []},
+%% #bits/uint32 E/mpint N/mpint Challenge/mpint
+%%  sessionid:16/bin Resp/uint32
+decode(<<?BYTE(?SSH_AGENTC_RSA_CHALLENGE),?UINT32(NBits),Bin/binary>>) ->
+    {E,Bin1} = decode_bignum(Bin),
+    {N,Bin2} = decode_bignum(Bin1),
+    {Challenge,Args} = decode_bignum(Bin2),
+    {ssh_agentc_rsa_challenge,[NBits,E,N,Challenge,Args]};
 
-     {ssh_agentc_add_smartcard_key,
-      ?SSH_AGENTC_ADD_SMARTCARD_KEY,
-      [string, string]},
+%% Size,N,E,D,_IQMP,_Q,_P,Comment
+decode(<<?BYTE(?SSH_AGENTC_ADD_RSA_IDENTITY),?UINT32(Size),Bin/binary>>) ->
+    {N,Bin1} = decode_bignum(Bin),
+    {E,Bin2} = decode_bignum(Bin1),
+    {D,Bin3} = decode_bignum(Bin2),
+    {IQMP,Bin4} = decode_bignum(Bin3),
+    {Q,Bin5} = decode_bignum(Bin4),
+    {P,Bin6} = decode_bignum(Bin5),
+    <<?STRING(Comment,_Len1),Args>> = Bin6,
+    <<>> = Args,
+    {ssh_agentc_add_rsa_identity,[Size,N,E,D,IQMP,Q,P,Comment]};
 
-     {ssh_agentc_add_smartcard_key_constrained,
-      ?SSH_AGENTC_ADD_SMARTCARD_KEY_CONSTRAINED,
-      [string, string, '...']},  %% [lifetime,uint32] [confirm]
+%% Size,N,E,D,_IQMP,_Q,_P,Comment  followed by [lifetime,uint32] [confirm]
+decode(<<?BYTE(?SSH_AGENTC_ADD_RSA_ID_CONSTRAINED),?UINT32(Size),
+	 Bin/binary>>) ->
+    {N,Bin1} = decode_bignum(Bin),
+    {E,Bin2} = decode_bignum(Bin1),
+    {D,Bin3} = decode_bignum(Bin2),
+    {IQMP,Bin4} = decode_bignum(Bin3),
+    {Q,Bin5} = decode_bignum(Bin4),
+    {P,Bin6} = decode_bignum(Bin5),
+    <<?STRING(Comment,_Len1),Args>> = Bin6,
+    {ssh_agentc_add_rsa_id_constrained,[Size,N,E,D,IQMP,Q,P,Comment,Args]};
 
-     {ssh_agentc_lock,   ?SSH_AGENTC_LOCK, [string]},
+%% #Bits/uint32, E/mpint, N/mpint
+decode(<<?BYTE(?SSH_AGENTC_REMOVE_RSA_IDENTITY),
+	 ?UINT32(Bits),?MPINT(E,_L0),?MPINT(N,_L0),Args/binary>>) ->
+    <<>> = Args,
+    {ssh_agentc_remove_rsa_identity,[Bits,E,N]};
 
-     {ssh_agentc_unlock, ?SSH_AGENTC_UNLOCK, [string]},
+decode(<<?BYTE(?SSH_AGENTC_REMOVE_ALL_RSA_IDENTITIES),Args/binary>>) ->
+    <<>> = Args,
+    {ssh_agentc_remove_all_rsa_identities,[]};
 
-     %% private OpenSSH extensions for SSH2
-     {ssh2_agentc_request_identities,
-      ?SSH2_AGENTC_REQUEST_IDENTITIES,
-      []},
+decode(<<?BYTE(?SSH_AGENTC_ADD_SMARTCARD_KEY),
+	 ?STRING(A1,_L1),?STRING(A2,_L2),Args/binary>>) ->
+    <<>> = Args,
+    {ssh_agentc_add_smartcard_key,[A1,A2]};
 
-     %% Blob/binary, Data/binary => SSH2_AGENT_SIGN_RESPONSE string
-     {ssh2_agentc_sign_request, ?SSH2_AGENTC_SIGN_REQUEST,
-      [binary,binary,uint32]},
+%% [lifetime,uint32] [confirm]
+decode(<<?BYTE(?SSH_AGENTC_ADD_SMARTCARD_KEY_CONSTRAINED),
+	 ?STRING(A1,_L1),?STRING(A2,_L2),Args/binary>>) ->
+    {ssh_agentc_add_smartcard_key_constrained,[A1,A2,Args]};
 
-     {ssh2_agentc_add_identity, ?SSH2_AGENTC_ADD_IDENTITY,
-      [string,'...']},
+decode(<<?BYTE(?SSH_AGENTC_LOCK),?STRING(Password,_Len),Args/binary>>) ->
+    <<>> = Args,
+    {ssh_agentc_lock,[Password]};
 
-     {ssh2_agentc_add_id_constrained,
-      ?SSH2_AGENTC_ADD_ID_CONSTRAINED,
-      [string,'...']},
+decode(<<?BYTE(?SSH_AGENTC_UNLOCK),?STRING(Password,_Len),Args/binary>>) ->
+    <<>> = Args,
+    {ssh_agentc_unlock,[Password]};
 
-     {ssh2_agentc_remove_identity, ?SSH2_AGENTC_REMOVE_IDENTITY, 
-      [binary]},
+%% private OpenSSH extensions for SSH2
+decode(<<?BYTE(?SSH2_AGENTC_REQUEST_IDENTITIES),Args/binary>>) ->
+    <<>> = Args,
+    {ssh2_agentc_request_identities,[]};
 
-     {ssh2_agentc_remove_all_identities, ?SSH2_AGENTC_REMOVE_ALL_IDENTITIES,
-      []}
-    ].
-    
+%% Blob/binary, Data/binary => SSH2_AGENT_SIGN_RESPONSE string
+decode(<<?BYTE(?SSH2_AGENTC_SIGN_REQUEST),?BINARY(Blob,_Len1),
+	 ?BINARY(Data,_Len2),?UINT32(Flags),Args/binary>>) ->
+    <<>> = Args,
+    {ssh2_agentc_sign_request,[Blob,Data,Flags]};
+
+decode(<<?BYTE(?SSH2_AGENTC_ADD_IDENTITY),
+	 ?STRING(Type,_Len1),Args/binary>>) ->
+    {ssh2_agentc_add_identity,[Type,Args]};
+
+decode(<<?BYTE(?SSH2_AGENTC_ADD_ID_CONSTRAINED),
+	 ?STRING(Type,_Len1),Args/binary>>) ->
+    {ssh2_agentc_add_id_constrained,[Type,Args]};
+
+decode(<<?BYTE(?SSH2_AGENTC_REMOVE_IDENTITY),
+	 ?BINARY(Blob,_Len1),Args/binary>>) ->
+    <<>> = Args,
+    {ssh2_agentc_remove_identity, [Blob]};
+
+decode(<<?BYTE(?SSH2_AGENTC_REMOVE_ALL_IDENTITIES),Args/binary>>) ->
+    <<>> = Args,
+    {ssh2_agentc_remove_all_identities,[]};
+
+decode(Data) ->
+    {unknown, Data}.
+
+
+   
 getuid() ->
     trim(os:cmd("echo $UID")).
 
@@ -118,7 +169,6 @@ accept_init(Caller, L) ->
 	{ok, S} ->
 	    Caller ! {self(), ok},
 	    inet:setopts(S, [{active, once}]),
-	    ssh_bits:install_messages(agent_messages()),
 	    session(S);
 	Error ->
 	    Caller ! {self, Error}
@@ -127,12 +177,14 @@ accept_init(Caller, L) ->
 session(S) ->
     receive
 	{tcp, S, Data} ->
-	    case ssh_bits:decode(Data) of
+	    case decode(Data) of
 		{unknown, _Data} ->
+		    io:format("unknown message ~p\n", [Data]),
 		    gen_tcp:send(S, <<?SSH_AGENT_FAILURE>>),
 		    gen_tcp:close(S),
 		    error;
 		Request ->
+		    io:format("request ~p\n", [Request]),
 		    case handle_request(Request) of
 			{ok,Reply} -> 
 			    gen_tcp:send(S, Reply),
@@ -154,12 +206,13 @@ session(S) ->
 	    Error
     end.
 
-handle_request({ssh_agentc_request_rsa_identities}) ->
+handle_request({ssh_agentc_request_rsa_identities,[]}) ->
     case list_all(v1) of
 	{ok,L} ->
 	    Length = length(L),
 	    Items = lists:map(fun({Blob,Comment}) ->
-				      [Blob,ssh_bits:encode([Comment],[string])]
+				      Len = byte_size(Comment),
+				      [Blob,<<?STRING(Comment,Len)>>]
 			      end, L),
 	    Reply = erlang:iolist_to_binary(
 		      [<<?SSH_AGENT_RSA_IDENTITIES_ANSWER,Length:32>>,Items]),
@@ -167,12 +220,13 @@ handle_request({ssh_agentc_request_rsa_identities}) ->
 	_Error ->
 	    {error, <<?SSH_AGENT_FAILURE>>}
     end;
-handle_request({ssh_agentc_rsa_challenge,Size,E,N,Chal,
-		<<_SessionID:16/binary, _ResponseType:32>>}) ->
+handle_request({ssh_agentc_rsa_challenge,
+		[Size,E,N,Chal,
+		 <<_SessionID:16/binary, _ResponseType:32>>]}) ->
     Blob = make_blob(v1, [Size,E,N]),
     case lookup_key(Blob) of
 	{ok,Key} ->
-	    Data = ssh_bits:encode([Chal],[bignum]),
+	    Data = encode_bignum(Chal),
 	    case public_key:sign(Data,sha,Key) of
 		{error, _Reason} ->
 		    {error, <<?SSH_AGENT_FAILURE>>};
@@ -183,31 +237,34 @@ handle_request({ssh_agentc_rsa_challenge,Size,E,N,Chal,
 	    {error, <<?SSH_AGENT_FAILURE>>}
     end;
 
-handle_request({ssh_agentc_add_rsa_identity,Size,N,E,D,_IQMP,_Q,_P,Comment}) ->
+handle_request({ssh_agentc_add_rsa_identity,
+		[Size,N,E,D,_IQMP,_Q,_P,Comment]}) ->
     Blob = make_blob(v1,[Size,E,N]),
     Key  = #'RSAPrivateKey' { modulus = N, publicExponent = E,
 			      privateExponent = D },
     add_key(Blob,v1,Key,Comment,<<>>,false);
 handle_request({ssh_agentc_add_rsa_id_constrained,
-		Size,N,E,D,_IQMP,_Q,_P,Comment,Rest}) ->
+		[Size,N,E,D,_IQMP,_Q,_P,Comment,Rest]}) ->
     Blob = make_blob(v1,[Size,E,N]),
     Key  = #'RSAPrivateKey' { modulus = N, publicExponent = E,
 			      privateExponent = D },
     add_key(Blob,v1,Key,Comment,Rest,true);
-handle_request({ssh_agentc_remove_rsa_identity,Size,N,E}) ->
+handle_request({ssh_agentc_remove_rsa_identity,[Size,N,E]}) ->
     Blob = make_blob(v1,[Size,E,N]),
     delete_key(Blob),
     {ok, <<?SSH_AGENT_SUCCESS>>};
-handle_request({ssh_agentc_remove_all_rsa_identities}) ->
+handle_request({ssh_agentc_remove_all_rsa_identities,[]}) ->
     delete_all(v1),
     {ok, <<?SSH_AGENT_SUCCESS>>};
-handle_request({ssh2_agentc_request_identities}) ->
+handle_request({ssh2_agentc_request_identities,[]}) ->
     case list_all(v2) of
 	{ok,L} ->
 	    Length = length(L),
 	    Items = lists:map(fun({Blob,Comment}) ->
-				      ssh_bits:encode([Blob,Comment],
-						      [binary,string])
+				      BlobLen = byte_size(Blob),
+				      CommentLen = byte_size(Comment),
+				      <<?BINARY(Blob,BlobLen),
+					?STRING(Comment,CommentLen)>>
 			      end, L),
 	    Reply = erlang:iolist_to_binary(
 		      [<<?SSH2_AGENT_IDENTITIES_ANSWER, Length:32>>,
@@ -216,7 +273,7 @@ handle_request({ssh2_agentc_request_identities}) ->
 	_Error ->
 	    {error, <<?SSH_AGENT_FAILURE>>}
     end;
-handle_request({ssh2_agentc_sign_request,Blob,Data,_Flags}) ->
+handle_request({ssh2_agentc_sign_request,[Blob,Data,_Flags]}) ->
     io:format("SIGN-REQUEST: Blob=~p, Flags=~p\n",
 	      [format_blob(v2,Blob),_Flags]),
     case lookup_key(Blob) of
@@ -225,30 +282,31 @@ handle_request({ssh2_agentc_sign_request,Blob,Data,_Flags}) ->
 		{error, _Reason} ->
 		    {error, <<?SSH_AGENT_FAILURE>>};
 		Signed ->
-		    Reply = ssh_bits:encode([Signed], [binary]),
+		    SignedLen = byte_size(Signed),
+		    Reply = <<?BINARY(Signed,SignedLen)>>,
 		    {ok, <<?SSH2_AGENT_SIGN_RESPONSE, Reply/binary>>}
 	    end;
 	_ ->
 	    {error, <<?SSH_AGENT_FAILURE>>}
     end;
-handle_request({ssh2_agentc_add_id_constrained,Type,Data}) ->
+handle_request({ssh2_agentc_add_id_constrained,[Type,Data]}) ->
     add_identity(Type, Data, true);
-handle_request({ssh2_agentc_add_identity,Type,Data}) ->
+handle_request({ssh2_agentc_add_identity,[Type,Data]}) ->
     add_identity(Type, Data, false);
-handle_request({ssh2_agentc_remove_identity, Blob}) ->
+handle_request({ssh2_agentc_remove_identity,[Blob]}) ->
     delete_key(Blob),
     {ok, <<?SSH_AGENT_SUCCESS>>};
-handle_request({ssh2_agentc_remove_all_identities}) ->
+handle_request({ssh2_agentc_remove_all_identities,[]}) ->
     delete_all(v2),
     {ok, <<?SSH_AGENT_SUCCESS>>};
-handle_request({ssh_agentc_lock, Password}) ->
+handle_request({ssh_agentc_lock,[Password]}) ->
     case lock(Password) of
 	ok ->
 	    {ok, <<?SSH_AGENT_SUCCESS>>};
 	{error,_Reason} ->
 	    {ok, <<?SSH_AGENT_FAILURE>>}
     end;
-handle_request({ssh_agentc_unlock, Password}) ->
+handle_request({ssh_agentc_unlock,[Password]}) ->
     case unlock(Password) of
 	ok ->
 	    {ok, <<?SSH_AGENT_SUCCESS>>};
@@ -256,22 +314,23 @@ handle_request({ssh_agentc_unlock, Password}) ->
 	    {ok, <<?SSH_AGENT_FAILURE>>}
     end.
 
-add_identity("ssh-rsa", Data, Constrained) ->
-    [N,E,D,_IQMP,_P,_Q,Comment,Rest] = 
-	ssh_bits:decode(Data, [mpint,mpint,mpint,
-			       mpint,mpint,mpint,string,'...']),
+add_identity(<<"ssh-rsa">>, Data, Constrained) ->
+    <<?MPINT(N,NLen),?MPINT(E,ELen),?MPINT(D,_DLen),
+      ?MPINT(_IQMP,_QMPLen),?MPINT(_P,_PLen),?MPINT(_Q,_QLen),
+      ?STRING(Comment,_CLen),Rest/binary>> = Data,
     Key  = #'RSAPrivateKey' { modulus = N, publicExponent = E,
 			      privateExponent = D },
-    Blob = ssh_bits:encode(["ssh-rsa",E,N],[string,mpint,mpint]),
+    Blob = <<?STRING(<<"ssh-rsa">>,7),?MPINT(E,ELen),?MPINT(N,NLen)>>,
     add_key(Blob,v2,Key,Comment,Rest,Constrained);
-add_identity("ssh-dss", Data, Constrained) ->
+add_identity(<<"ssh-dss">>, Data, Constrained) ->
     %% Y = Pub, X = Priv
-    [P,Q,G,Y,X,Comment,Rest] = 
-	ssh_bits:decode(Data, [mpint,mpint,mpint,
-			       mpint,mpint,string,'...']),
+    <<?MPINT(P,PLen),?MPINT(Q,QLen),?MPINT(G,GLen),
+      ?MPINT(Y,YLen),?MPINT(X,XLen),?STRING(Comment,_CommentLen),
+      Rest/binary>> = Data,
     Key = #'DSAPrivateKey'{p = P, q = Q, g = G, x=X, y=Y},
-    Blob = ssh_bits:encode(["ssh-dss",P,Q,G,Y],
-			   [string,mpint,mpint,mpint,mpint]),
+    Blob = <<?STRING(<<"ssh-dss">>,7),
+	     ?MPINT(P,PLen),?MPINT(Q,QLen),
+	     ?MPINT(G,GLen),?MPINT(Y,YLen)>>,
     add_key(Blob,v2,Key,Comment,Rest,Constrained);
 add_identity(_, _Data, _Constrained) ->
     {error, <<?SSH_AGENT_FAILURE>>}.
@@ -456,10 +515,12 @@ key_loop(KeyList,Locked,Password) ->
 
 sign_data(#'RSAPrivateKey'{} = Private, SigData) ->
     Signature = sign(SigData, sha, Private),
-    ssh_bits:encode(["ssh-rsa", Signature],[string, binary]);
+    SigSize = byte_size(Signature),
+    <<?STRING(<<"ssh-rsa">>,7), ?BINARY(Signature,SigSize)>>;
 sign_data(#'DSAPrivateKey'{} = Private, SigData) ->
     RawSignature = sign(SigData, sha, Private),
-    ssh_bits:encode(["ssh-dss", RawSignature],[string, binary]).
+    SigSize = byte_size(RawSignature),
+    <<?STRING(<<"ssh-dss">>,7), ?BINARY(RawSignature,SigSize)>>.
 
 sign(SigData, Hash, #'DSAPrivateKey'{} = Key) ->
     DerSignature = public_key:sign(SigData, Hash, Key),
@@ -475,9 +536,9 @@ key_type(#'DSAPrivateKey'{}) ->
     "DSA".
 
 key_size(#'RSAPrivateKey' { modulus=N }) ->
-    ssh_bits:isize(N);
+    isize(N);
 key_size(#'DSAPrivateKey'{ y=Y }) ->
-    ssh_bits:isize(Y)+1.
+    isize(Y)+1.
 
 	
 life_time(0, _Ref) ->
@@ -486,7 +547,9 @@ life_time(Time, Ref) when is_integer(Time), Time > 0 ->
     erlang:send_after(Time*1000, self(), {life, Ref}).
 
 make_blob(v1, [Size,E,N]) ->
-    ssh_bits:encode([Size,E,N],[uint32,bignum,bignum]).
+    EBin = encode_bignum(E),
+    NBin = encode_bignum(N),
+    <<?UINT32(Size),EBin/binary,NBin/binary>>.
 
 format_blob(Blob) ->
     format_blob(v2, Blob).
@@ -509,6 +572,38 @@ format_fingerprint(Binary) ->
 
 hex(I) when I < 10 -> I+$0;
 hex(I) when I < 16 -> (I-10)+$a.
+
+%%--------------------------------------------------------------------
+%% @doc
+%%     Count number of bits used to represent a non negative integer
+%% @end
+%%--------------------------------------------------------------------
+-spec isize(X::non_neg_integer()) -> non_neg_integer().
+
+isize(X) -> isize_(X).
+
+isize_(0) -> %% defined to 0, but we really need one bit!
+    0;
+isize_(X) when is_integer(X), X > 0 ->
+    isize32_(X,0).
+
+isize32_(X, I) ->
+    if X > 16#FFFFFFFF -> isize32_(X bsr 32, I+32);
+       true -> isize8_(X, I)
+    end.
+
+isize8_(X, I) ->
+    if X > 16#FF -> isize8_(X bsr 8, I+8);
+       X >= 2#10000000 -> I+8;
+       X >= 2#1000000 -> I+7;
+       X >= 2#100000 -> I+6;
+       X >= 2#10000 -> I+5;
+       X >= 2#1000 -> I+4;
+       X >= 2#100 -> I+3;
+       X >= 2#10 -> I+2;
+       X >= 2#1 -> I+1;
+       true -> I
+    end.
 
 %%
 %% Server utils
@@ -538,3 +633,4 @@ server_init(Caller,Ref,Name,Func,Args) ->
 	    Pid = whereis(Name),
 	    Caller ! {Ref, {error,{already_started,Pid}}}
     end.
+
