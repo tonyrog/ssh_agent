@@ -55,7 +55,7 @@ decode(<<?BYTE(?SSH_AGENTC_ADD_RSA_IDENTITY),?UINT32(Size),Bin/binary>>) ->
     {IQMP,Bin4} = decode_bignum(Bin3),
     {Q,Bin5} = decode_bignum(Bin4),
     {P,Bin6} = decode_bignum(Bin5),
-    <<?STRING(Comment,_Len1),Args>> = Bin6,
+    <<?STRING(Comment,_Len1),Args/binary>> = Bin6,
     <<>> = Args,
     {ssh_agentc_add_rsa_identity,[Size,N,E,D,IQMP,Q,P,Comment]};
 
@@ -68,7 +68,7 @@ decode(<<?BYTE(?SSH_AGENTC_ADD_RSA_ID_CONSTRAINED),?UINT32(Size),
     {IQMP,Bin4} = decode_bignum(Bin3),
     {Q,Bin5} = decode_bignum(Bin4),
     {P,Bin6} = decode_bignum(Bin5),
-    <<?STRING(Comment,_Len1),Args>> = Bin6,
+    <<?STRING(Comment,_Len1),Args/binary>> = Bin6,
     {ssh_agentc_add_rsa_id_constrained,[Size,N,E,D,IQMP,Q,P,Comment,Args]};
 
 %% #Bits/uint32, E/mpint, N/mpint
@@ -130,8 +130,6 @@ decode(<<?BYTE(?SSH2_AGENTC_REMOVE_ALL_IDENTITIES),Args/binary>>) ->
 decode(Data) ->
     {unknown, Data}.
 
-
-   
 getuid() ->
     trim(os:cmd("echo $UID")).
 
@@ -633,4 +631,3 @@ server_init(Caller,Ref,Name,Func,Args) ->
 	    Pid = whereis(Name),
 	    Caller ! {Ref, {error,{already_started,Pid}}}
     end.
-
