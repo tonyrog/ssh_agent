@@ -11,8 +11,8 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
--export([start_link/1]).
+-export([start/0, start/1]).
+-export([start_link/0, start_link/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -34,6 +34,7 @@
 	  blobs = [] :: [#blob{}] 
 	}).
 
+-define(RSA_TIMEOUT, 118000).
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -45,6 +46,12 @@
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
+start() ->
+    gen_server:start(?MODULE, [], []).
+
+start(Name) ->
+    gen_server:start({local, Name}, ?MODULE, [], []).
+
 start_link() ->
     gen_server:start_link(?MODULE, [], []).
 
@@ -76,7 +83,7 @@ init([]) ->
 	    {ok, #state { type = port,
 			  handle = P,
 			  device = Driver,
-			  blobs = Blobs }, 10000};
+			  blobs = Blobs }};
 	{uart,Device} ->
 	    {ok,U} = uart_open(Device),
 	    io:format("uart open ~s\n", [Device]),
@@ -84,7 +91,7 @@ init([]) ->
 	    {ok, #state { type = uart,
 			  handle = U,
 			  device = Device,
-			  blobs = Blobs }, 10000}
+			  blobs = Blobs }}
     end.
 
 %%--------------------------------------------------------------------
@@ -198,7 +205,7 @@ handle_info({uart_closed,U}, State) when
     {noreply, State#state { handle = undefined }};
     
 handle_info(_Info, State) ->
-    io:format("Got into ~w\n", [_Info]),
+    io:format("Got info ~w\n", [_Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -333,14 +340,22 @@ list_blobs(I, N, <<Size:32, VBlob:Size/binary,Rest/binary>>, Acc) ->
 uart_sign(U, Index, Data) ->
     M = iolist_to_binary(Data),
     MSize = byte_size(M),
-    uart:setopts(U, [{packet,4}]),
     ok = uart:send(U, <<2, Index, MSize:32, M/binary>>),
+    uart_sign_reply(U).
+
+uart_sign_reply(U) ->
     receive
 	{uart,U,<<0,Len:32,Signature:Len/binary>>} ->
 	    {ok,Signature};
 	{uart,U,<<1,Error/binary>>} ->
-	    {error,Error}
-    after 20000 ->
+	    {error,Error};
+	{uart,U,<<2,Info/binary>>} ->
+	    io:format("uart_sign_info: ~p\n", [Info]),
+	    uart_sign_reply(U);
+	Other ->
+	    io:format("Got other: ~p\n", [Other]),
+	    uart_sign_reply(U)
+    after ?RSA_TIMEOUT ->
 	    {error, timeout}
     end.
 

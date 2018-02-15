@@ -14,9 +14,11 @@
 -export([print_blobs/1]).
 
 -define(SERVER, rsa_sign_srv).
+-define(RSA_TIMEOUT, 120000).
 
 start() ->
-    rsa_sign_srv:start_link(?SERVER).
+    application:load(ssh_agent),
+    rsa_sign_srv:start(?SERVER).
 
 stop() -> stop(?SERVER).
 stop(Pid) -> gen_server:call(Pid,stop).
@@ -28,7 +30,8 @@ echo(Pid,Message) when is_binary(Message); is_list(Message) ->
 sign(Index, Message) -> sign(?SERVER, Index, Message).
 sign(Pid, Index, Message) when is_integer(Index), 
 			       is_binary(Message); is_list(Message) ->
-    gen_server:call(Pid, {sign, Index, iolist_to_binary(Message)}).
+    gen_server:call(Pid, {sign, Index, iolist_to_binary(Message)}, 
+		    ?RSA_TIMEOUT).
 
 list_blobs(Version) -> list_blobs(?SERVER,Version).
 list_blobs(Pid,Version) ->

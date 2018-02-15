@@ -30,7 +30,7 @@ enum
 
 #define SHA1_HASH_SIZE 20
 
-typedef struct _sha1_ctx_t
+typedef struct sha1_ctx_t
 {
     uint64_t length;                     // message length in bits
     uint32_t digest[SHA1_HASH_SIZE/4];   // Message Digest
@@ -55,7 +55,11 @@ static inline uint32_t shift(int n, uint32_t w)
 
 static inline uint32_t bytes_to_uint32(uint8_t* ptr)
 {
-    return (uint32_t)((ptr[0]<<24)|(ptr[1]<<16)|(ptr[2]<<8)|(ptr[3]));
+    uint32_t value = ptr[0];
+    value = (value << 8) | ptr[1];
+    value = (value << 8) | ptr[2];
+    value = (value << 8) | ptr[3];
+    return value;
 }
 
 // store uint32 as bigendian bytes
@@ -70,8 +74,10 @@ static inline void uint32_to_bytes(uint32_t x, uint8_t* ptr)
 // store uint64 as bigendian bytes
 static inline void uint64_to_bytes(uint64_t x, uint8_t* ptr)
 {
-    uint32_to_bytes(x >> 32, ptr);
-    uint32_to_bytes(x, ptr + 4);
+    uint32_t v = x >> 32;
+    uint32_to_bytes(v, ptr);
+    v = x;
+    uint32_to_bytes(v, ptr + 4);
 }
 
 // initialize sha1 contex
