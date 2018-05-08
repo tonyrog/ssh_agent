@@ -9,8 +9,9 @@ typedef uint16_t digit_t;
 typedef uint32_t ddigit_t;
 
 // defines to be used outside of this file
-// #define BIGNUM_TUNE    // extra tuning info
+// #define BIGNUM_TUNE              // extra tuning info
 // #define BIGNUM_DEBUG
+
 #define BIGNUM_USE_MUL_SQUARE
 
 typedef struct
@@ -298,14 +299,14 @@ static digit_t* bignum_halloc_digits(int n)
 	return xs;
     }
     DBGPRINT("bignum heap out of memory, alloc %d digit", n);
-break_here();
-    return NULL;
+    break_here();
+    return (digit_t*) 0;
 }
 
 int bignum_halloc(bignum_t* x, int n)
 {
     digit_t* xs = bignum_halloc_digits(n);
-    if (xs != NULL) {
+    if (xs != (digit_t*) 0) {
 	x->digits = xs;
 	x->asize  = n;
 	return 0;
@@ -315,7 +316,7 @@ int bignum_halloc(bignum_t* x, int n)
 
 int bignum_resize(bignum_t* xp, int ndigits)
 {
-    if (xp->asize >= ndigits) // allocated size if ok
+    if ((int)xp->asize >= ndigits) // allocated size if ok
 	return 0;
     if (xp->dynamic) { // allow dynamic allocation (n times!)
 	xp->dynamic--;
@@ -429,7 +430,7 @@ static void b_copy(digit_t* src, digit_t* dst, int n)
 
 int bignum_copy(bignum_t* src, bignum_t* dst)
 {
-    if (dst == NULL)
+    if (dst == (bignum_t*) 0)
 	return 0;
     else if (src != dst) {
 	if (bignum_resize(dst, src->size) < 0) return -1;    	
@@ -452,7 +453,7 @@ int bignum_copy_resize(bignum_t* src, bignum_t* dst, int min_size)
     }
     if (xl < min_size)
 	b_zero(dst->digits+xl, min_size-xl);
-    if (dst->size < min_size)
+    if ((int)dst->size < min_size)
 	dst->size = min_size;
     return dst->size;
 }
@@ -1222,7 +1223,7 @@ static int b_lshift(digit_t* x, int xl, int y, int sign, digit_t* r)
 	    digit_t* r0 = r;
 	    int add_one = 0;
 
-	    if (xl <= bw) {
+	    if (xl <= (int)bw) {
 		if (sign)
 		    *r = 1;
 		else
@@ -1780,8 +1781,8 @@ int bignum_bit_test(bignum_t* x, unsigned pos)
     if (x->sign) bignum_einval();
     d = pos / DEXP;   // digit
     pos %= DEXP;      // bit
-    if (d >= x->size)
-	return 0;     // defined as zero
+    if (d >= (int)x->size)
+	return 0;     // definied as zero
     return (x->digits[d] & (1 << pos)) != 0;
 }
 
@@ -1801,7 +1802,7 @@ int bignum_bit_clear(bignum_t* x, unsigned pos, bignum_t* r)
     int d;
     if (x->sign) bignum_einval();
     d = pos / DEXP;      // digit pos
-    if (d >= x->size) {  // already 0
+    if (d >= (int)x->size) {  // already 0
 	if (bignum_copy(x, r) < 0) return -1;
     }
     pos %= DEXP;
@@ -1834,15 +1835,6 @@ int bignum_byte_set(bignum_t* x, unsigned pos, uint8_t b, bignum_t* r)
     return 0;
 }
 
-uint8_t bignum_byte_get(bignum_t* x, unsigned pos)
-{
-    int d;
-    d = pos / sizeof(digit_t);       // digit number
-    if (d >= x->size) return 0;
-    pos = (pos % sizeof(digit_t))*8; // bit number in digit
-    return (x->digits[d] >> pos) & 0xff;
-}
-
 int bignum_digit_set(bignum_t* x, unsigned pos, digit_t d, bignum_t* r)
 {
     if (bignum_copy_resize(x, r, (pos+1)) < 0) return -1;
@@ -1854,6 +1846,15 @@ digit_t bignum_digit_get(bignum_t* x, unsigned pos)
 {
     if (pos >= x->size) return 0;
     return x->digits[pos];
+}
+
+uint8_t bignum_byte_get(bignum_t* x, unsigned pos)
+{
+    int d;
+    d = pos / sizeof(digit_t);       // digit number
+    if (d >= (int)x->size) return 0;
+    pos = (pos % sizeof(digit_t))*8; // bit number in digit
+    return (x->digits[d] >> pos) & 0xff;
 }
 
 static int inline d_ffs(digit_t d)
@@ -1882,8 +1883,8 @@ int bignum_ffs(bignum_t* x)
 {
     int i;
     if (x->sign) bignum_einval();
-    for (i=0; (i < x->size) && (x->digits[i] == 0); i++) ;
-    if (i == x->size)
+    for (i=0; (i < (int)x->size) && (x->digits[i] == 0); i++) ;
+    if (i == (int)x->size)
 	return 0;
     return (i*DEXP) + d_ffs(x->digits[i]);
 }
@@ -1915,7 +1916,7 @@ int bignum_popcount(bignum_t* x)
     int count = 0;
     int i;
     if (x->sign) bignum_einval();
-    for (i = 0; i < x->size; i++)
+    for (i = 0; i < (int)x->size; i++)
 	count += d_popcount(x->digits[i]);
     return count;
 }
@@ -1925,7 +1926,7 @@ int bignum_parity(bignum_t* x)
     int parity = 0;
     int i;
     if (x->sign) bignum_einval();
-    for (i = 0; i < x->size; i++)
+    for (i = 0; i < (int)x->size; i++)
 	parity += d_parity(x->digits[i]);
     return parity & 1;
 }
@@ -2227,18 +2228,18 @@ int bignum_powmod_two_prime (bignum_t* a,bignum_t* b,
 	BIGNUM_AUTO(a1, p1->size);
 	BIGNUM_AUTO(a2, p2->size);
 	BIGNUM_AUTO(n,  p1->size+p2->size);
-	int msz = MAX(a->size,b->size)+1;
+	uint16_t msz = MAX(a->size,b->size)+1;
 	BIGNUM_AUTO(m1, msz);
 	BIGNUM_AUTO(m2, msz);
     
 	bignum_powmod_prime(a, b, p1, &a1);
 	bignum_powmod_prime(a, b, p2, &a2);
-	bignum_egcd(p1, p2, NULL, &m1, &m2); // fixme check = 1
+	bignum_egcd(p1, p2, (bignum_t*) 0, &m1, &m2); // fixme check = 1
     
 	bignum_multiply(p1, p2, &n);
 	AUTO_BEGIN {
-	    int sz1 = a1.size+m2.size+p2->size;
-	    int sz2 = a2.size+m1.size+p1->size;
+	    uint16_t sz1 = a1.size+m2.size+p2->size;
+	    uint16_t sz2 = a2.size+m1.size+p1->size;
 	    BIGNUM_AUTO(t1, sz1);
 	    BIGNUM_AUTO(t2, MAX(sz1,sz2)+1);
     

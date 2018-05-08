@@ -1,4 +1,6 @@
 /* -*- c++ -*- */
+
+#define BIGNUM_HEAP_SIZE 512
 #include "bignum.h"
 #include "sha1.h"
 
@@ -22,12 +24,27 @@
 
 #define RSP_OK    0
 #define RSP_ERROR 1
+#define RSP_INFO  2
 
 #define NUM_RSA_KEYS 1
 #define PINCODE_LENGTH 6
 
+#define RELEASED  0
+#define PRESSED   1
+#define NONE      2
+
+#define NUM_BUTTONS 4
+#define DEBOUNCE_TIME 100
+
+#define BUZZER_PIN  12
+
+#define PINCODE_ENTER_TIME 5000
+#define PINCODE_LIFE_TIME  120000
+
+
 // p1*p2 = n
-typedef struct _rsakey_t {
+typedef struct
+{
     bignum_t d;     // private exponent
     bignum_t p1;    // prime1
     bignum_t p2;    // prime2
@@ -40,9 +57,6 @@ rsakey_t key[NUM_RSA_KEYS];
 
 uint8_t key_locked[NUM_RSA_KEYS];
 
-
-#define BUZZER_PIN 15
-#define NUM_BUTTONS 4
 
 int read_uint8(uint8_t* vp)
 {
@@ -62,7 +76,7 @@ int write_uint8(uint8_t v)
 
 int write_bytes(uint8_t* data, int len)
 {
-    return (Serial.write(data, len) == len);
+    return ((int)Serial.write(data, len) == len);
 }
 
 // return number of bytes for a non negative number
@@ -90,7 +104,7 @@ int read_uint32(uint32_t* vp)
 {
     int i;
     uint32_t v = 0;
-    for (i=0; i < sizeof(uint32_t); i++) {
+    for (i=0; i < (int)sizeof(uint32_t); i++) {
       uint8_t x;
       if (!read_uint8(&x)) return 0;
       v = (v<<8)|x;
@@ -103,7 +117,7 @@ int read_digit(digit_t* vp)
 {
     int i;
     digit_t v = 0;
-    for (i=0; i < sizeof(digit_t); i++) {
+    for (i=0; i < (int)sizeof(digit_t); i++) {
 	uint8_t x;
 	if (!read_uint8(&x)) return 0;
 	v = (v<<8)|x;
@@ -213,12 +227,6 @@ void write_blob(int vsn, rsakey_t* kp)
     }
 }
 
-#define RELEASED  0
-#define PRESSED   1
-#define NONE      2
-
-#define DEBOUNCE_TIME 100
-
 int button_pin[NUM_BUTTONS] = {2, 3, 4, 5};
 int button_state[NUM_BUTTONS];
 unsigned long button_time[NUM_BUTTONS];
@@ -255,14 +263,11 @@ int read_button(int num)
 
 void beep(int ms)
 {
-  digitalWrite(BUZZER_PIN, HIGH);
-  delay(ms);
-  digitalWrite(BUZZER_PIN, LOW);
-  delay(ms);
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(ms);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(ms);
 }
-
-#define PINCODE_ENTER_TIME 5000
-#define PINCODE_LIFE_TIME  60000
 
 const uint8_t pin_code[PINCODE_LENGTH] = {1, 2, 3, 4, 3, 2};
 uint8_t pin_input[PINCODE_LENGTH];
@@ -273,11 +278,11 @@ unsigned long pin_life_time;
 
 void clear_pincode()
 {
-  int i;
-  for (i = 0; i < PINCODE_LENGTH; i++)
-    pin_input[i] = 0;
-  pin_pos = 0;
-  pin_enter = 0;
+    int i;
+    for (i = 0; i < PINCODE_LENGTH; i++)
+	pin_input[i] = 0;
+    pin_pos = 0;
+    pin_enter = 0;
 }
 
 void check_pincode()
@@ -286,35 +291,35 @@ void check_pincode()
     int check_pin = 0;
         
     for (i = 0; i < NUM_BUTTONS; i++) {
-      switch(read_button(i)) {
-      case RELEASED:
-        pin_input[pin_pos++] = i+1;
-        pin_pos %= PINCODE_LENGTH;
-        check_pin = 1;
-        pin_enter = 1;
-        pin_enter_time = millis();
-        break;
-      case PRESSED:
-        beep(100);
-        break;
-      default:
-        break;
-      }
+	switch(read_button(i)) {
+	case RELEASED:
+	    pin_input[pin_pos++] = i+1;
+	    pin_pos %= PINCODE_LENGTH;
+	    check_pin = 1;
+	    pin_enter = 1;
+	    pin_enter_time = millis();
+	    break;
+	case PRESSED:
+	    beep(100);
+	    break;
+	default:
+	    break;
+	}
     }
     
     if (check_pin) {
-      int code_match=0;
-      for (i = 0; i < PINCODE_LENGTH; i++) {
-          int j = (pin_pos + i) % PINCODE_LENGTH;
-          if (pin_code[i] == pin_input[j])
-              code_match++;
-      }
-      if (code_match == PINCODE_LENGTH) {
-          key_locked[0] = 0;
-          beep(100); beep(200); beep(400);
-          pin_life_time = millis();
-          clear_pincode();
-      }
+	int code_match=0;
+	for (i = 0; i < PINCODE_LENGTH; i++) {
+	    int j = (pin_pos + i) % PINCODE_LENGTH;
+	    if (pin_code[i] == pin_input[j])
+		code_match++;
+	}
+	if (code_match == PINCODE_LENGTH) {
+	    key_locked[0] = 0;
+	    beep(100); beep(200); beep(400);
+	    pin_life_time = millis();
+	    clear_pincode();
+	}
     }
     else if (pin_enter) {
         if ((millis() - pin_enter_time) >= PINCODE_ENTER_TIME) {          
@@ -362,13 +367,13 @@ void setup()
 
     pinMode(BUZZER_PIN, OUTPUT);
     for(i = 0; i < NUM_BUTTONS; i++) {
-      button_state[i] = RELEASED;  
-      pinMode(button_pin[i], INPUT);
+	button_state[i] = RELEASED;  
+	pinMode(button_pin[i], INPUT_PULLUP);
     }
     
     Serial.begin(9600);
     while (!Serial)
-      ; // wait for serial port to connect. Needed for native USB port only
+	; // wait for serial port to connect. Needed for native USB port only
 }
 
 static const uint8_t sha1_prefix[15] = {
@@ -395,11 +400,24 @@ int encode_v15_sha1(uint8_t* hash, bignum_t* m, int key_size)
     while(n--) // PAD
 	bignum_byte_set(m, pos--, 0xff, m);
     bignum_byte_set(m, pos--, 0x00, m);
-    for (i = 0; i < sizeof(sha1_prefix); i++) // ASN1 prefix
+    for (i = 0; i < (int)sizeof(sha1_prefix); i++) // ASN1 prefix
 	bignum_byte_set(m, pos--, sha1_prefix[i], m);
     for (i = 0; i < SHA1_HASH_SIZE; i++)      // Hash
 	bignum_byte_set(m, pos--, hash[i], m);
     return 0;
+}
+
+static void send_data(uint8_t code, const char* msg)
+{
+    int len = strlen(msg);
+    write_uint32(1+len);
+    write_uint8(code);
+    write_bytes((uint8_t*)msg, len);
+}
+
+static void send_error(const char* msg)
+{
+    send_data(RSP_ERROR, msg);
 }
 
 void loop() 
@@ -429,8 +447,6 @@ void loop()
     }
     case REQ_LIST: {
 	int i;
-	// return <<OK>> <<n>>
-	//    <<key_blob_1>> ... <<key_blob_n>> (n max 255)
 	if (reqlen) goto einval;
 	rsplen = 1+1;
 	for (i = 0; i < NUM_RSA_KEYS; i++)
@@ -446,59 +462,66 @@ void loop()
       
     case REQ_SIGN: {
         uint32_t mlen;
-	      uint8_t k;
-	      int i;
+	uint8_t k;
+	int i;
         sha1_ctx_t ctx;
         uint8_t hash[SHA1_HASH_SIZE];
 
-	      if (reqlen < 1) goto einval;
+	if (reqlen < 1) goto einval;
         if (!read_uint8(&k)) goto eio;
-	      reqlen--;
+	reqlen--;
         if (k >= NUM_RSA_KEYS) goto einval;
-	      if (reqlen < 4) goto einval;
+
+        if (key_locked[k]) {
+	    beep(250); beep(250); beep(250);
+            goto eaccess;
+        }
+	
+	if (reqlen < 4) goto einval;
         if (!read_uint32(&mlen)) goto eio;
         reqlen -= 4;
 
-	      if (reqlen < mlen) goto einval;
-	      // process message bytes one at the time
-	      sha1_init(&ctx);
-	      for (i = 0; i < mlen; i++) {
-	        uint8_t mbuf[1];
-	        if (!read_uint8(mbuf)) goto eio;
-	        sha1_update(&ctx, mbuf, 1);
-	        reqlen--;
-	      }
+	if (reqlen < mlen) goto einval;
 	
-	      sha1_final(&ctx, hash);
+	// process message bytes one at the time
+	sha1_init(&ctx);
 
-        beep(250);
-        if (key_locked[k]) {
-            beep(250);
-            goto eaccess;
-        }
+	for (i = 0; i < (int)mlen; i++) {
+	    uint8_t mbuf[1];
+	    if (!read_uint8(mbuf)) goto eio;
+	    sha1_update(&ctx, mbuf, 1);
+	    reqlen--;
+	}
+	
+	sha1_final(&ctx, hash);
+	
+	AUTO_BEGIN {
+	    BIGNUM_AUTO(r, key[k].n.size);
+	    // BIGNUM_AUTO(m, key[k].n.size);
+	    uint32_t rsize;
+	    
+	    encode_v15_sha1(hash, &r, key[k].n.size*sizeof(digit_t)*8);
+	    bignum_powmod(&r, &key[k].d, &key[k].n, &r);
 
-	      AUTO_BEGIN {
-	        BIGNUM_AUTO(r, key[k].n.size);
-	        BIGNUM_AUTO(m, key[k].n.size);
-	        uint32_t rsize;
-		
-	        encode_v15_sha1(hash, &m, key[k].n.size*sizeof(digit_t)*8);
-	        // bignum_powmod(&m, &key[k].d, &key[k].n, &r);
-	        bignum_powmod_two_prime(&m, &key[k].d, &key[k].p1, &key[k].p2, &r);
+	    //bignum_powmod_two_prime(&r, &key[k].d, &key[k].p1, &key[k].p2, &r);
+	    rsize = mpint_size(&r);
+	    write_uint32(1 + 4 + rsize);
+	    write_uint8(RSP_OK);
+	    write_uint32(rsize);
+	    write_mpint(r.digits, r.size);
+	    Serial.flush();
 
-	        rsize = mpint_size(&r);
-	        write_uint32(1 + 4 + rsize);
-	        write_uint8(RSP_OK);
-	        write_uint32(rsize);
-	        write_mpint(r.digits, r.size);
-	      } AUTO_END;
-	      break;
+	    beep(300);
+		    
+	    
+	} AUTO_END;
+	break;
     }
     default:
         goto einval;
     }
     return;
-
+    
 einval:
     code = "einval";
     goto error;
@@ -511,12 +534,10 @@ eio:
 
 error:
     while(reqlen) {
-	    if (!read_uint8(&req)) return;
-	    reqlen--;
+	if (!read_uint8(&req)) return;
+	reqlen--;
     }
 
 emit_error:
-    write_uint32(1+strlen(code));
-    write_uint8(RSP_ERROR);
-    write_bytes((uint8_t*)code, strlen(code));    
+    send_error(code);
 }
