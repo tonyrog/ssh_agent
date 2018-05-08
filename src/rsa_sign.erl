@@ -11,6 +11,7 @@
 -export([echo/1, echo/2]).
 
 -export([test/0]).
+-export([hex/1]).
 -export([print_blobs/1]).
 
 -define(SERVER, rsa_sign_srv).
