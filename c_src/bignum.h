@@ -1489,13 +1489,13 @@ int bignum_square(bignum_t* x, bignum_t* r)
 	else if (x==r) {
 	    AUTO_BEGIN {
 		BIGNUM_AUTO(tmp, 2*x->size);
-		b_zero(tmp.digits, x->size);
+		b_zero(tmp.digits, x->size+1);
 		rsz = b_sqr(x->digits,x->size,tmp.digits);
 		b_copy(tmp.digits, r->digits, rsz);
 	    } AUTO_END;
 	}
 	else {
-	    b_zero(r->digits, x->size);
+	    b_zero(r->digits, x->size+1);
 	    rsz = b_sqr(x->digits, x->size, r->digits);
 	}
     }
@@ -1526,7 +1526,7 @@ int bignum_multiply(bignum_t* x, bignum_t* y, bignum_t* r)
 	else if ((x==r)||(y==r)) {
 	    AUTO_BEGIN {
 		BIGNUM_AUTO(tmp, x->size+y->size);
-		b_zero(tmp.digits, x->size);
+		b_zero(tmp.digits, x->size+1);
 #ifdef BIGNUM_USE_MUL_SQUARE
 		if (x==y)
 		    rsz = b_sqr(x->digits,x->size,tmp.digits);
@@ -1537,7 +1537,7 @@ int bignum_multiply(bignum_t* x, bignum_t* y, bignum_t* r)
 	    } AUTO_END;
 	}
 	else {
-	    b_zero(r->digits, x->size);
+	    b_zero(r->digits, x->size+1);
 #ifdef BIGNUM_USE_MUL_SQUARE	    
 	    if (x==y)
 		rsz = b_sqr(x->digits, x->size, r->digits);
