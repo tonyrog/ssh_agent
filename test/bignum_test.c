@@ -288,7 +288,7 @@ void test_powmod_prime()
     } AUTO_END;
 }
 
-#define K1024
+#define K4096
 
 #ifdef K1024
 #include "key_1024.h"  // 0,12s, (-O = 0,03s )
@@ -453,16 +453,17 @@ int test_alloc()
 
 int main()
 {
-    // test_1();
-    // test_123456789();
-    // test_powmod();
-    // test_powmod_prime();
-    // test_powmod_two_prime();    
+    test_1();
+    test_2();
+    test_123456789();
+    test_powmod();
+    test_powmod_prime();
+    test_powmod_two_prime();    
 
-    // test_gcd2();
-    // test_gcd();
-    // test_egcd();
-    // test_alloc(5);
+    test_gcd2();
+    test_gcd();
+    test_egcd();
+    test_alloc(5);
 
     key_init(); test_sign();
 

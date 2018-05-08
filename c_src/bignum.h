@@ -11,6 +11,7 @@ typedef uint32_t ddigit_t;
 // defines to be used outside of this file
 // #define BIGNUM_TUNE    // extra tuning info
 // #define BIGNUM_DEBUG
+#define BIGNUM_USE_MUL_SQUARE
 
 typedef struct
 {
@@ -35,6 +36,7 @@ int bignum_abs_comp(bignum_t* x, bignum_t* y);
 
 int bignum_add(bignum_t* x, bignum_t* y, bignum_t* r);
 int bignum_subtract(bignum_t* x, bignum_t* y, bignum_t* r);
+int bignum_square(bignum_t* x, bignum_t* r);
 int bignum_multiply(bignum_t* x, bignum_t* y, bignum_t* r);
 int bignum_div(bignum_t* x, bignum_t* y, bignum_t* q);
 int bignum_rem(bignum_t* x, bignum_t* y, bignum_t* r);
@@ -127,7 +129,7 @@ int bignum_const(bignum_t* bp, const digit_t* ds, int ndigits);
 #define DMASK ((digit_t)-1)       // mask for digit bits
 
 #ifndef BIGNUM_HEAP_SIZE
-#define BIGNUM_HEAP_SIZE 4096
+#define BIGNUM_HEAP_SIZE 8192
 #endif
 
 #ifndef BIGNUM_HSTACK_SIZE
@@ -469,65 +471,59 @@ int bignum_halloc_copy(bignum_t* src, bignum_t* dst)
 
 // calculate dst = src1 + src2 ( + carry)
 static digit_t b_add3(digit_t* src1, digit_t* src2, digit_t* dst, 
-		       digit_t carry, int* ip, int n)
+		       digit_t carry, int n)
 {
-    int i = *ip;
+    int i = 0;
     while(i < n) {
-	digit_t x = src2[i];
-	digit_t y = src1[i]+carry;
+	digit_t x = *src2++;
+	digit_t y = *src1++ + carry;
 	carry = (y < carry);
 	y = x + y;
 	carry += (y < x);
-	dst[i] = y;
+	*dst++ = y;
 	i++;
     }
-    *ip = i;
     return carry;
 }
 
-static digit_t b_add2(digit_t* src, digit_t* dst, digit_t d,
-		       int* ip, int n)
+static digit_t b_add2(digit_t* src, digit_t* dst, digit_t d, int n)
 {
-    int i = *ip;
+    int i = 0;
     while(i < n) {
-	digit_t y = src[i]+d;
+	digit_t y = *src++ + d;
 	d = (y < d);
-	dst[i] = y;
+	*dst++ = y;
 	i++;
     }
-    *ip = i;
     return d;
 }
 
 static digit_t b_sub3(digit_t* src1, digit_t* src2, digit_t* dst,
-		       digit_t borrow,	int* ip, int n)
+		      digit_t borrow, int n)
 {
-    int i=*ip;
+    int i=0;
     while(i < n) {
-	digit_t x = src1[i];
-	digit_t y = src2[i]+borrow;
+	digit_t x = *src1++;
+	digit_t y = *src2++ + borrow;
 	borrow = (y < borrow);
 	y = x - y;
 	borrow += (y > x);
-	dst[i] = y;
+	*dst++ = y;
 	i++;
     }
-    *ip = i;
     return borrow;
 }
 
-static digit_t b_sub2(digit_t* src,digit_t* dst, digit_t d,
-		       int* ip, int n)
+static digit_t b_sub2(digit_t* src,digit_t* dst, digit_t d, int n)
 {
-    int i=*ip;
+    int i=0;
     while(i < n) {
-	digit_t x = src[i];
+	digit_t x = *src++;
 	digit_t y = x - d;
 	d = (y > x);
-	dst[i] = y;
+	*dst++ = y;
 	i++;
     }
-    *ip = i;
     return d;
 }
 
@@ -582,6 +578,65 @@ static int d_mulsub(digit_t* x, int xl, digit_t d,
     return (r - r0) + 1;
 }
 
+
+// Square digits in x store in r (x & r may point into a common area)
+// Assumption: x is destroyed if common area and digits in r are zero
+// to the size of xl+1
+
+static int b_sqr(digit_t* x, int xl, digit_t* r)
+{
+    digit_t d_next = *x;
+    digit_t d;
+    digit_t* r0 = r;
+    digit_t* s = r;
+
+    if ((r + xl) == x)	/* "Inline" operation */
+	*x = 0;
+    x++;
+	
+    while(xl--) {
+	digit_t* y = x;
+	digit_t y_0 = 0, y_1 = 0, y_2 = 0, y_3 = 0;
+	digit_t b0, b1;
+	digit_t z0, z1, z2;
+	digit_t t;
+	int y_l = xl;
+		
+	s = r;
+	d = d_next;
+	d_next = *x; 
+	x++;
+
+	DMUL(d, d, b1, b0);
+	DSUMc(*s, b0, y_3, t);
+	*s++ = t;
+	z1 = b1;
+	while(y_l--) {
+	    DMUL(d, *y, b1, b0);
+	    y++;
+	    DSUMc(b0, b0, y_0, z0);
+	    DSUMc(z0, z1, y_2, z2);
+	    DSUMc(*s, z2, y_3, t);
+	    *s++ = t;
+	    DSUMc(b1, b1, y_1, z1);
+	}
+	z0 = y_0;
+	DSUMc(z0, z1, y_2, z2);
+	DSUMc(*s, z2, y_3, t);
+	*s = t;
+	if (xl != 0) {
+	    s++;
+	    t = (y_1+y_2+y_3);
+	    *s = t;
+	    r += 2;
+	}
+    }
+    if (*s == 0)
+	return (s - r0);
+    else
+	return (s - r0) + 1;
+}
+
 // Multiply digits in x with digits in y and store in r
 // Assumption: digits in r must be 0 (upto the size of x)
 
@@ -616,6 +671,7 @@ static int b_mul(digit_t* x, int xl, digit_t* y, int yl, digit_t* r)
     else
 	return (rt - r0) + 1;
 }
+
 
 static int b_comp(digit_t* xp, int xl, digit_t* yp, int yl)
 {
@@ -691,9 +747,8 @@ static int b_trail(digit_t* src,int n,int sign)
 	}
 	for (i=0; i < n-1; i++)
 	    src[i] = ~src[i];
-	i=0;
-	b_add2(src, src, 1, &i, n);
-	return i;
+	b_add2(src, src, 1, n);
+	return n;
     }
     return bu_trail(src, n);
 }
@@ -926,22 +981,22 @@ static int b_addsub(digit_t* xp,int sign1,int xl,
 		    bignum_t* dst)
 {
     if (sign1 == sign2) {
-	int i=0;
 	digit_t carry = 0;
 
 	if (bignum_resize(dst, MAX(xl, yl)+1) < 0) return -1;    
 
 	if (xl < yl) {
-	    carry = b_add3(xp, yp, dst->digits, carry, &i, xl);
-	    carry = b_add2(yp, dst->digits, carry, &i, yl);
+	    carry = b_add3(xp, yp, dst->digits, carry, xl);
+	    carry = b_add2(yp+xl, dst->digits+xl, carry, yl-xl);
+	    dst->size = yl;
 	}
 	else {
-	    carry = b_add3(yp, xp, dst->digits, carry, &i, yl);
-	    carry = b_add2(xp, dst->digits, carry, &i, xl);
+	    carry = b_add3(yp, xp, dst->digits, carry, yl);
+	    carry = b_add2(xp+yl, dst->digits+yl, carry, xl-yl);
+	    dst->size = xl;
 	}
 	if (carry)
-	    dst->digits[i++] = carry;
-	dst->size = i;
+	    dst->digits[dst->size++] = carry;
 	dst->sign = sign1;
     }
     else {
@@ -952,21 +1007,19 @@ static int b_addsub(digit_t* xp,int sign1,int xl,
 	else {
 	    if (bignum_resize(dst, MAX(xl, yl)) < 0) return -1;
 	    if (cmp > 0) {
-		int i=0;
 		digit_t borrow = 0;
 
-		borrow = b_sub3(xp,yp,dst->digits,borrow,&i,yl);
-		b_sub2(xp,dst->digits,borrow,&i,xl);
-		dst->size = bu_trail(dst->digits,i);
+		borrow = b_sub3(xp,yp,dst->digits,borrow,yl);
+		b_sub2(xp+yl,dst->digits+yl,borrow,xl-yl);
+		dst->size = bu_trail(dst->digits,xl);
 		dst->sign = bignum_is_zero(dst) ? 0 : sign1;
 	    }
 	    else {
-		int i=0;
 		digit_t borrow = 0;
 		
-		borrow = b_sub3(yp,xp,dst->digits,borrow,&i,xl);
-		b_sub2(yp,dst->digits,borrow,&i,yl);
-		dst->size = bu_trail(dst->digits,i);
+		borrow = b_sub3(yp,xp,dst->digits,borrow,xl);
+		b_sub2(yp+xl,dst->digits+xl,borrow,yl-xl);
+		dst->size = bu_trail(dst->digits,yl);
 		dst->sign = bignum_is_zero(dst) ? 0 : sign2;
 	    }
 	}
@@ -1124,7 +1177,6 @@ static int z_sub(digit_t* y, int yl, digit_t* r)
 }
 
 // arithmetic left shift or right
-// FIXME: x == r ?
 static int b_lshift(digit_t* x, int xl, int y, int sign, digit_t* r)
 {
     if (y == 0) {
@@ -1419,6 +1471,38 @@ int bignum_subtract(bignum_t* x, bignum_t* y, bignum_t* r)
 		    y->digits, !y->sign, y->size, r);
 }
 
+int bignum_square(bignum_t* x, bignum_t* r)
+{
+    int rsz;
+
+    if (bignum_is_zero(x))
+	rsz = bignum_small(r, 0);
+    else if (bignum_is_one(x))
+	rsz = bignum_copy(x, r);
+    else {
+	if (bignum_resize(r, 2*x->size) < 0)
+	    return -1;
+	if (x->size == 1) {
+	    rsz = d_mul(x->digits, x->size, x->digits[0], r->digits);
+	}
+	else if (x==r) {
+	    AUTO_BEGIN {
+		BIGNUM_AUTO(tmp, 2*x->size);
+		b_zero(tmp.digits, x->size);
+		rsz = b_sqr(x->digits,x->size,tmp.digits);
+		b_copy(tmp.digits, r->digits, rsz);
+	    } AUTO_END;
+	}
+	else {
+	    b_zero(r->digits, x->size);
+	    rsz = b_sqr(x->digits, x->size, r->digits);
+	}
+    }
+    r->size = rsz;
+    r->sign = 0;
+    return 1;	
+}
+
 int bignum_multiply(bignum_t* x, bignum_t* y, bignum_t* r)
 {
     int rsz;
@@ -1442,13 +1526,23 @@ int bignum_multiply(bignum_t* x, bignum_t* y, bignum_t* r)
 	    AUTO_BEGIN {
 		BIGNUM_AUTO(tmp, x->size+y->size);
 		b_zero(tmp.digits, x->size);
-		rsz = b_mul(x->digits,x->size,y->digits,y->size,tmp.digits);
+#ifdef BIGNUM_USE_MUL_SQUARE
+		if (x==y)
+		    rsz = b_sqr(x->digits,x->size,tmp.digits);
+		else
+#endif
+		    rsz = b_mul(x->digits,x->size,y->digits,y->size,tmp.digits);
 		b_copy(tmp.digits, r->digits, rsz);
 	    } AUTO_END;
 	}
 	else {
 	    b_zero(r->digits, x->size);
-	    rsz = b_mul(x->digits, x->size, y->digits, y->size, r->digits);
+#ifdef BIGNUM_USE_MUL_SQUARE	    
+	    if (x==y)
+		rsz = b_sqr(x->digits, x->size, r->digits);
+	    else
+#endif
+		rsz = b_mul(x->digits, x->size, y->digits, y->size, r->digits);
 	}
     }
     r->size = rsz;
@@ -1588,6 +1682,7 @@ int bignum_mod(bignum_t* x, bignum_t* y, bignum_t* r)
     return res;
 }
 
+// FIXME: x == r
 int bignum_bsl(bignum_t* x, int y, bignum_t* r)
 {
     int need_bits = x->size*DEXP;
@@ -1603,6 +1698,7 @@ int bignum_bsl(bignum_t* x, int y, bignum_t* r)
     return 0;
 }
 
+// FIXME: x == r
 int bignum_bsr(bignum_t* x, int y, bignum_t* r)
 {
     int need_bits = x->size*DEXP;
@@ -1685,7 +1781,7 @@ int bignum_bit_test(bignum_t* x, unsigned pos)
     d = pos / DEXP;   // digit
     pos %= DEXP;      // bit
     if (d >= x->size)
-	return 0;     // definied as zero
+	return 0;     // defined as zero
     return (x->digits[d] & (1 << pos)) != 0;
 }
 
@@ -1738,9 +1834,17 @@ int bignum_byte_set(bignum_t* x, unsigned pos, uint8_t b, bignum_t* r)
     return 0;
 }
 
+uint8_t bignum_byte_get(bignum_t* x, unsigned pos)
+{
+    int d;
+    d = pos / sizeof(digit_t);       // digit number
+    if (d >= x->size) return 0;
+    pos = (pos % sizeof(digit_t))*8; // bit number in digit
+    return (x->digits[d] >> pos) & 0xff;
+}
+
 int bignum_digit_set(bignum_t* x, unsigned pos, digit_t d, bignum_t* r)
 {
-    if (x->sign) bignum_einval();
     if (bignum_copy_resize(x, r, (pos+1)) < 0) return -1;
     r->digits[pos] = d;
     return 0;
@@ -1750,15 +1854,6 @@ digit_t bignum_digit_get(bignum_t* x, unsigned pos)
 {
     if (pos >= x->size) return 0;
     return x->digits[pos];
-}
-
-uint8_t bignum_byte_get(bignum_t* x, unsigned pos)
-{
-    int d;
-    d = pos / sizeof(digit_t);       // digit number
-    if (d >= x->size) return 0;
-    pos = (pos % sizeof(digit_t))*8; // bit number in digit
-    return (x->digits[d] >> pos) & 0xff;
 }
 
 static int inline d_ffs(digit_t d)
