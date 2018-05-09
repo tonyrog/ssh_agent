@@ -13,6 +13,7 @@ typedef uint32_t ddigit_t;
 // #define BIGNUM_DEBUG
 
 #define BIGNUM_USE_MUL_SQUARE
+#define BIGNUM_USE_NEW_SQR
 
 typedef struct
 {
@@ -579,6 +580,39 @@ static int d_mulsub(digit_t* x, int xl, digit_t d,
     return (r - r0) + 1;
 }
 
+#ifdef BIGNUM_USE_NEW_SQR
+static int b_sqr(digit_t* x, int xl, digit_t* r)
+{
+    int s;
+    digit_t r3=0, r2=0, r1=0, r0=0;
+    
+    for (s = 0; s < 2*xl-1; s++) {
+	int a = (s<xl) ? 0 : (s-xl+1);
+	int i;
+	for (i = a; i <= s/2; i++) {
+	    int j = s - i;
+	    digit_t p1, p0;
+	    digit_t c = 0, c2 = 0;
+	    DMUL(x[i], x[j], p1, p0);
+	    if (i != j) {  // 2*x[i][j]
+		DSUMc(p0, p0, c2, p0);
+		DSUMc(p1, p1, c2, p1);
+	    }
+	    DSUMc(p0, r0, c, r0);
+	    DSUMc(p1, r1, c, r1);
+	    DSUMc(r2, c2, c, r2);
+	    DSUMc(r3, 0,  c, r3);
+	}
+	*r++ = r0;
+	r0 = r1; r1 = r2; r2 = r3; r3 = 0;
+    }
+    if (r0 != 0) {
+	*r++ = r0;
+	s++;
+    }
+    return s;
+}
+#else
 
 // Square digits in x store in r (x & r may point into a common area)
 // Assumption: x is destroyed if common area and digits in r are zero
@@ -637,6 +671,7 @@ static int b_sqr(digit_t* x, int xl, digit_t* r)
     else
 	return (s - r0) + 1;
 }
+#endif
 
 // Multiply digits in x with digits in y and store in r
 // Assumption: digits in r must be 0 (upto the size of x)

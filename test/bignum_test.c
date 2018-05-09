@@ -107,9 +107,45 @@ void test_123456789()
     bignum_printf("c = %s\n", &c);
 }
 
+void square(bignum_t* x , bignum_t* r, char* xs, char* rs)
+{
+    char* ptr;
+    char  rbuf[64];
+    
+    bignum_from_string(xs, x);
+    bignum_square(x, r);
+    ptr = bignum_to_string(r, rbuf, sizeof(rbuf));
+    if (strcmp(ptr, rs) == 0)
+	printf("OK\n");
+    else {
+	bignum_printf("x*x = %s\n", r);
+	printf("ERROR\n");
+    }    
+}
+
+void test_sqr()
+{
+    AUTO_BEGIN {
+	BIGNUM_AUTO(x, 8);
+	BIGNUM_AUTO(r, 17);
+
+	square(&x, &r, "3910", "15288100");
+	square(&x, &r, "8199566", "67232882588356");
+	square(&x, &r, "619663994", "383983465460032036");
+	square(&x, &r, "62914277015", "3958206252320157310225");
+	square(&x, &r, "140808825446040", "19827125323493361804951681600");
+
+	square(&x, &r, "65535", "4294836225");
+	square(&x, &r, "4294967295", "18446744065119617025");
+
+	square(&x, &r, "65536", "4294967296");
+	square(&x, &r, "4294967296","18446744073709551616");
+    } AUTO_END;
+}
+
 void test_gcd()
 {
-    AUTO_BEGIN {        
+    AUTO_BEGIN {
 	BIGNUM_AUTO(x, 8);
 	BIGNUM_AUTO(y, 8);
 	BIGNUM_DYNAMIC(gcd);
@@ -445,7 +481,7 @@ int test_alloc()
 	    else {
 		bignum_printf("z = %s\n", &z);
 		printf("ERROR\n");
-	    }	
+	    }
 	} AUTO_END;
     } AUTO_END;
     return 0;
@@ -456,6 +492,7 @@ int main()
     test_1();
     test_2();
     test_123456789();
+    test_sqr();
     test_powmod();
     test_powmod_prime();
     test_powmod_two_prime();    
@@ -463,7 +500,7 @@ int main()
     test_gcd2();
     test_gcd();
     test_egcd();
-    test_alloc(5);
+    test_alloc();
 
     key_init(); test_sign();
 
