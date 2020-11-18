@@ -18,6 +18,8 @@
 #include "key_4096.h"
 #endif
 
+#include "pincode.h"
+
 #define REQ_ECHO  0
 #define REQ_LIST  1
 #define REQ_SIGN  2
@@ -27,20 +29,6 @@
 #define RSP_INFO  2
 
 #define NUM_RSA_KEYS 1
-#define PINCODE_LENGTH 6
-
-#define RELEASED  0
-#define PRESSED   1
-#define NONE      2
-
-#define NUM_BUTTONS 4
-#define DEBOUNCE_TIME 100
-
-#define BUZZER_PIN  12
-
-#define PINCODE_ENTER_TIME 5000
-#define PINCODE_LIFE_TIME  120000
-
 
 // p1*p2 = n
 typedef struct
@@ -52,11 +40,14 @@ typedef struct
     bignum_t e;     // public exponent
 } rsakey_t;
 
-// const?
+#define PIN_LIFE_TIME  120000
+uint8_t master_pin[] = {1,2,3,4,3,2};
+
 rsakey_t key[NUM_RSA_KEYS];
-
+pincode_t key_pin[NUM_RSA_KEYS] = {{ sizeof(master_pin),
+				     master_pin,
+				     PIN_LIFE_TIME, 0 }};
 uint8_t key_locked[NUM_RSA_KEYS];
-
 
 int read_uint8(uint8_t* vp)
 {
@@ -227,118 +218,8 @@ void write_blob(int vsn, rsakey_t* kp)
     }
 }
 
-int button_pin[NUM_BUTTONS] = {2, 3, 4, 5};
-int button_state[NUM_BUTTONS];
-unsigned long button_time[NUM_BUTTONS];
-
-int read_button(int num)
-{
-    int value = !digitalRead(button_pin[num]);
-    if (!value) {
-      if (button_state[num] == PRESSED) {
-          button_state[num] = RELEASED;
-          return RELEASED;
-      }
-      button_state[num] = RELEASED;
-    }
-    else {
-        switch(button_state[num]) {
-        case PRESSED: 
-          break;
-        case NONE:
-          if ((millis()-button_time[num]) >= DEBOUNCE_TIME) {
-              button_state[num] = PRESSED;
-              return PRESSED;
-          }
-          break;
-        case RELEASED:
-          button_state[num] = NONE;
-          button_time[num] = millis();
-          break;
-        default: break;
-        }
-    }
-    return NONE;
-}
-
-void beep(int ms)
-{
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(ms);
-    digitalWrite(BUZZER_PIN, LOW);
-    delay(ms);
-}
-
-const uint8_t pin_code[PINCODE_LENGTH] = {1, 2, 3, 4, 3, 2};
-uint8_t pin_input[PINCODE_LENGTH];
-int pin_pos;
-int pin_enter;
-unsigned long pin_enter_time;
-unsigned long pin_life_time;
-
-void clear_pincode()
-{
-    int i;
-    for (i = 0; i < PINCODE_LENGTH; i++)
-	pin_input[i] = 0;
-    pin_pos = 0;
-    pin_enter = 0;
-}
-
-void check_pincode()
-{
-    int i;
-    int check_pin = 0;
-        
-    for (i = 0; i < NUM_BUTTONS; i++) {
-	switch(read_button(i)) {
-	case RELEASED:
-	    pin_input[pin_pos++] = i+1;
-	    pin_pos %= PINCODE_LENGTH;
-	    check_pin = 1;
-	    pin_enter = 1;
-	    pin_enter_time = millis();
-	    break;
-	case PRESSED:
-	    beep(100);
-	    break;
-	default:
-	    break;
-	}
-    }
-    
-    if (check_pin) {
-	int code_match=0;
-	for (i = 0; i < PINCODE_LENGTH; i++) {
-	    int j = (pin_pos + i) % PINCODE_LENGTH;
-	    if (pin_code[i] == pin_input[j])
-		code_match++;
-	}
-	if (code_match == PINCODE_LENGTH) {
-	    key_locked[0] = 0;
-	    beep(100); beep(200); beep(400);
-	    pin_life_time = millis();
-	    clear_pincode();
-	}
-    }
-    else if (pin_enter) {
-        if ((millis() - pin_enter_time) >= PINCODE_ENTER_TIME) {          
-            clear_pincode();
-        }
-    }
-    else if (key_locked[0] == 0) {
-        if ((millis() - pin_life_time) >= PINCODE_LIFE_TIME) {
-            key_locked[0] = 1;
-            beep(400); beep(200); beep(100);
-            clear_pincode();
-        }
-    }
-}
-
-
 void setup()
 {
-    int i;
 #ifdef  K1024
     bignum_const(&key[0].d, key_1024_d, sizeof(key_1024_d)/sizeof(digit_t));
     bignum_const(&key[0].n, key_1024_n, sizeof(key_1024_n)/sizeof(digit_t));
@@ -362,14 +243,9 @@ void setup()
     bignum_const(&key[0].p2, key_4096_p2, sizeof(key_4096_p2)/sizeof(digit_t));
     bignum_const(&key[0].e, key_4096_e, sizeof(key_4096_e)/sizeof(digit_t));
 #endif
-    clear_pincode();
     key_locked[0] = 1;
 
-    pinMode(BUZZER_PIN, OUTPUT);
-    for(i = 0; i < NUM_BUTTONS; i++) {
-	button_state[i] = RELEASED;  
-	pinMode(button_pin[i], INPUT_PULLUP);
-    }
+    pincode_init();
     
     Serial.begin(9600);
     while (!Serial)
@@ -427,7 +303,7 @@ void loop()
     uint32_t rsplen;
     const char* code = "";
 
-    check_pincode();
+    check_pincode(key_pin, key_locked, NUM_RSA_KEYS);
     
     if (Serial.available() <= 0)
 	return;
